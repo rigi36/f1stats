@@ -3,7 +3,7 @@ const TEAMS = [
  ['mclaren', '#ff9418'], ['ferrari', '#ff4055'], ['mercedes', '#35dfc5'],
  ['red bull', '#997cff'], ['racing bulls', '#80b7ff'], ['alpine', '#f58ac9'],
  ['aston martin', '#238c69'], ['williams', '#2274eb'], ['haas', '#f1f3f7'],
- ['audi', '#ffcf43'], ['cadillac', '#b3a38a'], ['sauber', '#93db42'],
+ ['audi', '#b95a78'], ['cadillac', '#b3a38a'], ['sauber', '#93db42'],
  ['alphatauri', '#b4cbe2'], ['alfa romeo', '#bb5868']
 ];
 export function teamKey(name='') {

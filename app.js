@@ -8,11 +8,11 @@ let palette=new Map(),order=[];
 const teamColor=d=>palette.get(teamKey(d.team_name))||'#a1adbb';
 const driversInOrder=()=>orderedDrivers(data.drivers,order);
 const tyre=(compound,age=null)=>`<span class="tyre" style="--tyre:${colors[compound]||colors.UNKNOWN}" title="${escape(compound)}${age===null?'':` · возраст ${age} кр. к началу круга`}"><i>${escape(compound?.[0]||'?')}</i>${age===null?'':age}</span>`;
-let sessions=[],data=null,overrides={},selected=new Set(),busy=false;
+let sessions=[],data=null,overrides={},selected=new Set(),chartSelected=new Set(),busy=false;
 const status=(message,error=false)=>{$('status').textContent=message;$('status').classList.toggle('error',error);};
 const storageKey=()=>`f1stats:selection:v1:${data.session.session_key}`;
 function persist(){try{localStorage.setItem(storageKey(),JSON.stringify(overrides));}catch{status('Не удалось сохранить выбор в браузере. Экспортируй его в файл.',true);}}
-function persistView(){try{localStorage.setItem(`f1stats:view:v1:${data.session.session_key}`,JSON.stringify({order,selected:[...selected]}));}catch{status('Порядок пилотов не сохранён: хранилище недоступно.',true);}}
+function persistView(){try{localStorage.setItem(`f1stats:view:v1:${data.session.session_key}`,JSON.stringify({order,selected:[...selected],chartSelected:[...chartSelected]}));}catch{status('Порядок пилотов не сохранён: хранилище недоступно.',true);}}
 async function api(endpoint,params){
  const url=`https://api.openf1.org/v1/${endpoint}?${new URLSearchParams(params)}`;
  for(let attempt=0;attempt<3;attempt++){
@@ -44,11 +44,12 @@ async function loadRace(){
  data={session,drivers:raw.drivers,stints:raw.stints,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
  overrides={};try{const saved=JSON.parse(localStorage.getItem(storageKey())||'{}');overrides=validateOverrides(saved);}catch{status('Сохранённый выбор прочитать не удалось. Применён автоматический отбор.',true);}
  selected=new Set(data.drivers.map(d=>d.driver_number));
- order=data.drivers.map(d=>d.driver_number);palette=teamStyles(data.drivers);
- try{const view=JSON.parse(localStorage.getItem(`f1stats:view:v1:${session.session_key}`)||'null');const valid=new Set(order);if(view&&Array.isArray(view.order)&&Array.isArray(view.selected)){order=[...new Set(view.order.filter(n=>valid.has(n)))];order.push(...data.drivers.map(d=>d.driver_number).filter(n=>!order.includes(n)));selected=new Set(view.selected.filter(n=>valid.has(n)));}}catch{}
+ order=data.drivers.map(d=>d.driver_number);palette=teamStyles(data.drivers);chartSelected=new Set(order);
+ try{const view=JSON.parse(localStorage.getItem(`f1stats:view:v1:${session.session_key}`)||'null');const valid=new Set(order);if(view&&Array.isArray(view.order)&&Array.isArray(view.selected)){order=[...new Set(view.order.filter(n=>valid.has(n)))];order.push(...data.drivers.map(d=>d.driver_number).filter(n=>!order.includes(n)));selected=new Set(view.selected.filter(n=>valid.has(n)));if(Array.isArray(view.chartSelected))chartSelected=new Set(view.chartSelected.filter(n=>valid.has(n)));}}catch{}
  $('race-title').textContent=`${session.location} · ${session.session_name} ${session.year}`;
  const numbers=[...new Set(data.laps.map(l=>l.stint_number))].filter(n=>n>0).sort((a,b)=>a-b);
  $('stint').innerHTML='<option value="all">Все отрезки</option>'+numbers.map(n=>`<option value="${n}">Отрезок ${n}</option>`).join('');
+ $('chart-stint').innerHTML=$('stint').innerHTML;
  $('from').value='';$('to').value='';$('chart-from').value='';$('chart-to').value='';$('analysis').hidden=false;render();
  if(!$('status').classList.contains('error'))status('');
  }catch(e){status(`Загрузка не завершена: ${e.message}`,true);}finally{lock(false);}
@@ -58,20 +59,19 @@ function render(){
  const stats=data.drivers.map(d=>({...d,...driverStats(data.laps.filter(l=>l.driver_number===d.driver_number),overrides)})).sort((a,b)=>(a.pace??Infinity)-(b.pace??Infinity));
  const best=stats.find(d=>d.pace!==null)?.pace;
  $('summary').innerHTML='<thead><tr><th>Пилот</th><th>Средний темп</th><th>Δ с / круг</th><th>Кругов</th><th>Шинная стратегия</th></tr></thead><tbody>'+stats.map(d=>`<tr><td class="driver-name" style="--team:${teamColor(d)};border-left:3px solid var(--team);color:var(--team);background:color-mix(in srgb,var(--team) 9%,transparent)">${escape(d.name_acronym||d.driver_number)}<span class="team">${escape(d.team_name)}</span></td><td class="${d.pace===best?'best':''}">${formatTime(d.pace)}</td><td class="${d.pace===best?'best':''}">${d.pace===null?'—':d.pace===best?'BEST':`+${(d.pace-best).toFixed(3)}`}</td><td>${d.count} / ${d.total}</td><td>${data.stints.filter(s=>s.driver_number===d.driver_number).sort((a,b)=>a.stint_number-b.stint_number).map(s=>tyre(s.compound)).join(' → ')}</td></tr>`).join('')+'</tbody>';
- $('driver-filters').innerHTML=driversInOrder().map((d,i)=>`<div class="driver-chip" draggable="true" data-order="${d.driver_number}" style="--team:${teamColor(d)}"><button class="driver-toggle" data-driver="${d.driver_number}" aria-pressed="${selected.has(d.driver_number)}">${escape(d.name_acronym||d.driver_number)}</button><button class="move" data-move="${d.driver_number}" data-step="-1" aria-label="${escape(d.name_acronym)} влево" ${i===0?'disabled':''}>‹</button><button class="move" data-move="${d.driver_number}" data-step="1" aria-label="${escape(d.name_acronym)} вправо" ${i===order.length-1?'disabled':''}>›</button></div>`).join('');
  renderMatrix();
  $('stints').innerHTML='<thead><tr><th>Пилот</th><th>Отрезок</th><th>Шины / возраст</th><th>Круги</th><th>Учтено</th><th>Средний темп</th></tr></thead><tbody>'+data.stints.slice().sort((a,b)=>a.driver_number-b.driver_number||a.stint_number-b.stint_number).map(s=>{const d=data.drivers.find(d=>d.driver_number===s.driver_number);const stat=driverStats(data.laps.filter(l=>l.driver_number===s.driver_number&&l.stint_number===s.stint_number),overrides);return `<tr><td style="color:${d?teamColor(d):'#a1adbb'}">${escape(d?.name_acronym||s.driver_number)}</td><td>${s.stint_number}</td><td>${tyre(s.compound,s.tyre_age_at_start??0)}</td><td>${s.lap_start}–${s.lap_end}</td><td>${stat.count} / ${stat.total}</td><td>${formatTime(stat.pace)}</td></tr>`;}).join('')+'</tbody>';
 }
 function visibleLaps(){return data.laps.filter(l=>selected.has(l.driver_number)&&($('stint').value==='all'||String(l.stint_number)===$('stint').value));}
 function renderMatrix(){
- const drivers=driversInOrder().filter(d=>selected.has(d.driver_number));const visible=visibleLaps();const numbers=[...new Set(visible.map(l=>l.lap_number))].sort((a,b)=>a-b);const lookup=new Map(visible.map(l=>[lapKey(l),l]));
- $('laps').innerHTML=`<thead><tr><th>Круг</th>${drivers.map(d=>`<th style="color:${teamColor(d)};border-top:3px solid ${teamColor(d)}">${escape(d.name_acronym||d.driver_number)}</th>`).join('')}</tr></thead><tbody>`+numbers.map(n=>`<tr><td>${n}</td>`+drivers.map(d=>{const l=lookup.get(`${d.driver_number}:${n}`);if(!l)return '<td>—</td>';const yes=included(l,overrides),manual=Object.hasOwn(overrides,lapKey(l));const reason=manual?(yes?'IN':'EXC'):(l.reasons.join(' · ')||'');return `<td class="team-cell" style="--team:${teamColor(d)}"><button class="lap-button ${yes?'':'excluded'} ${manual?'manual':''}" data-lap="${lapKey(l)}" aria-pressed="${yes}" aria-label="${escape(d.name_acronym)} круг ${n}: ${formatTime(l.lap_duration)}, ${escape(reason)}" title="${escape(reason)}" ${validTime(l)?'':'disabled'}>${formatTime(l.lap_duration)} ${tyre(l.compound,l.tyre_age)}<small>${escape(reason)}</small></button></td>`;}).join('')+'</tr>').join('')+'</tbody>';
- if(!drivers.length)$('laps').innerHTML='<tbody><tr><td>Нет выбранных пилотов.</td></tr></tbody>';
+ const drivers=driversInOrder();const visible=visibleLaps();const numbers=[...new Set(visible.map(l=>l.lap_number))].sort((a,b)=>a-b);const lookup=new Map(visible.map(l=>[lapKey(l),l]));
+ $('laps').innerHTML=`<thead><tr><th>Круг</th>${drivers.map(d=>{const i=order.indexOf(d.driver_number),active=selected.has(d.driver_number);return `<th class="driver-header ${active?'':'collapsed-driver'}" data-order="${d.driver_number}" draggable="true" style="--team:${teamColor(d)}"><div class="column-controls"><button class="move" data-move="${d.driver_number}" data-step="-1" aria-label="${escape(d.name_acronym)} влево" ${i===0?'disabled':''}>‹</button><button class="column-toggle" data-driver="${d.driver_number}" aria-pressed="${active}" title="${escape(d.team_name)}">${escape(d.name_acronym||d.driver_number)}</button><button class="move" data-move="${d.driver_number}" data-step="1" aria-label="${escape(d.name_acronym)} вправо" ${i===order.length-1?'disabled':''}>›</button></div></th>`;}).join('')}</tr></thead><tbody>`+numbers.map(n=>`<tr><td>${n}</td>`+drivers.map(d=>{const l=lookup.get(`${d.driver_number}:${n}`);if(!selected.has(d.driver_number))return '<td class="collapsed-driver"></td>';if(!l)return '<td>—</td>';const yes=included(l,overrides),manual=Object.hasOwn(overrides,lapKey(l));const reason=manual?(yes?'IN':'EXC'):(l.reasons.join(' · ')||'');return `<td class="team-cell" style="--team:${teamColor(d)}"><button class="lap-button ${yes?'':'excluded'} ${manual?'manual':''}" data-lap="${lapKey(l)}" aria-pressed="${yes}" aria-label="${escape(d.name_acronym)} круг ${n}: ${formatTime(l.lap_duration)}, ${escape(reason)}" title="${escape(reason)}" ${validTime(l)?'':'disabled'}>${formatTime(l.lap_duration)} ${tyre(l.compound,l.tyre_age)}<small>${escape(reason)}</small></button></td>`;}).join('')+'</tr>').join('')+'</tbody>';
+
  renderChart();
 }
 $('load').onclick=loadRace;$('year').onchange=loadSessions;$('stint').onchange=renderMatrix;
-$('driver-filters').onclick=e=>{const move=e.target.closest('[data-move]');if(move){const n=Number(move.dataset.move);order=moveDriver(order,n,order.indexOf(n)+Number(move.dataset.step));persistView();render();return;}const b=e.target.closest('[data-driver]');if(!b)return;const n=Number(b.dataset.driver);selected.has(n)?selected.delete(n):selected.add(n);persistView();render();};
-$('laps').onclick=e=>{const b=e.target.closest('[data-lap]');if(!b||b.disabled)return;const lap=data.laps.find(l=>lapKey(l)===b.dataset.lap);overrides[lapKey(lap)]=!included(lap,overrides);persist();render();};
+function handleColumnClick(e){const move=e.target.closest('[data-move]');if(move){const n=Number(move.dataset.move);order=moveDriver(order,n,order.indexOf(n)+Number(move.dataset.step));persistView();render();return;}const b=e.target.closest('[data-driver]');if(!b)return;const n=Number(b.dataset.driver);selected.has(n)?selected.delete(n):selected.add(n);persistView();render();};
+$('laps').onclick=e=>{if(e.target.closest('[data-move], [data-driver]')){handleColumnClick(e);return;}const b=e.target.closest('[data-lap]');if(!b||b.disabled)return;const lap=data.laps.find(l=>lapKey(l)===b.dataset.lap);overrides[lapKey(lap)]=!included(lap,overrides);persist();render();};
 function range(include){const from=Number($('from').value||1),to=Number($('to').value||Math.max(...data.laps.map(l=>l.lap_number)));if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from){status('Укажи корректный диапазон кругов.',true);return;}for(const l of visibleLaps())if(l.lap_number>=from&&l.lap_number<=to&&validTime(l))overrides[lapKey(l)]=include;persist();render();}
 $('exclude-range').onclick=()=>range(false);$('include-range').onclick=()=>range(true);
 $('reset').onclick=()=>{if(!confirm('Сбросить все ручные изменения этой гонки?'))return;overrides={};persist();render();};
@@ -79,25 +79,30 @@ function download(content,name){const url=URL.createObjectURL(new Blob([content]
 $('export').onclick=()=>download(JSON.stringify({format:'f1stats-selection-v1',session_key:data.session.session_key,overrides},null,2),`f1stats-${data.session.session_key}.json`);
 $('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>2000000)throw new Error('Слишком большой файл');const json=JSON.parse(await file.text());if(json.format!=='f1stats-selection-v1'||json.session_key!==data.session.session_key)throw new Error('Файл относится к другой сессии или имеет неверный формат');const next=validateOverrides(json.overrides);overrides=next;status('Выбор импортирован.');persist();render();}catch(error){status(`Импорт не выполнен: ${error.message}`,true);}finally{e.target.value='';}};
 let dragged=null,chartState=null;
-$('driver-filters').ondragstart=e=>{const chip=e.target.closest('[data-order]');if(!chip)return;dragged=Number(chip.dataset.order);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(dragged));chip.classList.add('dragging');};
-$('driver-filters').ondragover=e=>{if(dragged!==null){e.preventDefault();e.dataTransfer.dropEffect='move';}};
-$('driver-filters').ondrop=e=>{e.preventDefault();const chip=e.target.closest('[data-order]');if(chip&&dragged!==null){const target=Number(chip.dataset.order);if(target!==dragged){order=moveDriver(order,dragged,order.indexOf(target));persistView();}}dragged=null;render();};
-$('driver-filters').ondragend=()=>{dragged=null;for(const el of document.querySelectorAll('.dragging'))el.classList.remove('dragging');};
+$('laps').ondragstart=e=>{const chip=e.target.closest('[data-order]');if(!chip)return;dragged=Number(chip.dataset.order);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(dragged));chip.classList.add('dragging');};
+$('laps').ondragover=e=>{if(dragged!==null){e.preventDefault();e.dataTransfer.dropEffect='move';}};
+$('laps').ondrop=e=>{e.preventDefault();const chip=e.target.closest('[data-order]');if(chip&&dragged!==null){const target=Number(chip.dataset.order);if(target!==dragged){order=moveDriver(order,dragged,order.indexOf(target));persistView();}}dragged=null;render();};
+$('laps').ondragend=()=>{dragged=null;for(const el of document.querySelectorAll('.dragging'))el.classList.remove('dragging');};
 $('order-pace').onclick=()=>{order=driversInOrder().sort((a,b)=>(driverStats(data.laps.filter(l=>l.driver_number===a.driver_number),overrides).pace??Infinity)-(driverStats(data.laps.filter(l=>l.driver_number===b.driver_number),overrides).pace??Infinity)).map(d=>d.driver_number);persistView();render();};
 $('order-team').onclick=()=>{order=driversInOrder().sort((a,b)=>teamKey(a.team_name).localeCompare(teamKey(b.team_name))).map(d=>d.driver_number);persistView();render();};
 $('select-all').onclick=()=>{selected=new Set(order);persistView();render();};
 $('select-none').onclick=()=>{selected.clear();persistView();render();};
 function renderChart(){
  if(!data)return;
+ $('chart-drivers').innerHTML=driversInOrder().map(d=>`<label class="chart-driver" style="--team:${teamColor(d)}"><input type="checkbox" data-chart-driver="${d.driver_number}" ${chartSelected.has(d.driver_number)?'checked':''}><span>${escape(d.name_acronym||d.driver_number)}</span></label>`).join('');
  const from=Number($('chart-from').value||1),to=Number($('chart-to').value||Infinity);
  const valid=Number.isInteger(from)&&from>=1&&(Number.isInteger(to)||to===Infinity)&&to>=from;
  $('chart-status').textContent=valid?'':'Неверный диапазон кругов.';
- chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>selected.has(d.driver_number)),laps:valid?visibleLaps():[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('stint').value});
+ chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value});
  $('chart-copy').disabled=$('chart-download').disabled=!chartState.hasData;
  $('pace-chart').setAttribute('aria-label',`${$('race-title').textContent}: ${$('chart-mode').selectedOptions[0].textContent}`);
  $('chart-data').textContent=chartState.series.map(s=>`${s.driver.name_acronym}: ${formatTime(mean(s.laps))}, ${s.laps.length} кругов`).join('; ');
 }
 $('chart-mode').onchange=renderChart;
+$('chart-stint').onchange=renderChart;
+$('chart-drivers').onchange=e=>{const n=Number(e.target.dataset.chartDriver);if(!Number.isFinite(n))return;e.target.checked?chartSelected.add(n):chartSelected.delete(n);persistView();renderChart();};
+$('chart-all').onclick=()=>{chartSelected=new Set(order);persistView();renderChart();};
+$('chart-none').onclick=()=>{chartSelected.clear();persistView();renderChart();};
 for(const id of ['chart-from','chart-to'])$(id).oninput=renderChart;
 $('pace-chart').onpointermove=e=>{const rect=e.currentTarget.getBoundingClientRect(),x=(e.clientX-rect.left)*1600/rect.width,y=(e.clientY-rect.top)*940/rect.height;const nearest=chartState?.points?.reduce((best,p)=>Math.hypot(p.x-x,p.y-y)<(best?.distance??20)?{...p,distance:Math.hypot(p.x-x,p.y-y)}:best,null);e.currentTarget.title=nearest?`${nearest.driver.name_acronym} · круг ${nearest.lap.lap_number} · ${formatTime(nearest.lap.lap_duration)}`:'';};
 function chartBlob(){return new Promise((resolve,reject)=>$('pace-chart').toBlob(blob=>blob?resolve(blob):reject(new Error('PNG не создан')),'image/png'));}
