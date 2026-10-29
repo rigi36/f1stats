@@ -12,7 +12,7 @@ function tyreBadge(ctx,compound,x,y,r=10){const c=TYRE_COLORS[compound]||TYRE_CO
 export function chartSeries(drivers,laps,overrides,{from=1,to=Infinity}={}) {
  return drivers.map(driver=>({driver,laps:laps.filter(l=>l.driver_number===driver.driver_number&&l.lap_number>=from&&l.lap_number<=to&&included(l,overrides)).sort((a,b)=>a.lap_number-b.lap_number)}));
 }
-export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='laps',from=1,to=Infinity,stint='all',stints=[],pits=[],showTyres=true}) {
+export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='laps',from=1,to=Infinity,stint='all',stints=[],pits=[],showTyres=true,showPits=true}) {
  const badgePerLine=Math.max(1,Math.floor((1430/Math.max(1,drivers.length)-8)/30));
  const badgeRows=Math.max(0,...tyreContext(drivers,stints,pits,{from,to,stint}).map(r=>Math.ceil(r.stints.length/badgePerLine)));
  const averageLegendY=Math.max(842,806+badgeRows*27+25);
@@ -46,6 +46,19 @@ export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='lap
    for(const l of s.laps){const px=x(l.lap_number),py=y(l.lap_duration);if(!prev||l.lap_number!==prev.lap_number+1||l.stint_number!==prev.stint_number)ctx.moveTo(px,py);else ctx.lineTo(px,py);prev=l;points.push({x:px,y:py,driver:s.driver,lap:l});}ctx.stroke();ctx.setLineDash([]);
    for(const p of points.filter(p=>p.driver===s.driver)){ctx.beginPath();ctx.arc(p.x,p.y,3,0,2*Math.PI);ctx.fill();}
   }
+  if(showPits){
+   const boxes=[];
+   tyreRows.forEach(row=>{const driverSeries=series.find(s=>s.driver.driver_number===row.driver.driver_number);
+    for(const pit of row.pits){const before=driverSeries?.laps.filter(l=>l.lap_number<pit.lap_number).at(-1),after=driverSeries?.laps.find(l=>l.lap_number>pit.lap_number);
+     const t=before&&after?(before.lap_duration+after.lap_duration)/2:(before||after)?.lap_duration;if(!Number.isFinite(t))continue;
+     const px=x(pit.lap_number+.5),py=y(t),label=`${row.driver.name_acronym||row.driver.driver_number} PIT ${pit.lap_number}`;ctx.font='bold 13px monospace';const bw=ctx.measureText(label).width+14,bx=Math.max(x0,Math.min(x0+w-bw,px+8));let by=Math.max(y0+4,py-35);
+     while(boxes.some(b=>bx<b.x+b.w&&bx+bw>b.x&&by<b.y+21&&by+21>b.y)&&by>y0+30)by-=26;
+     boxes.push({x:bx,y:by,w:bw});ctx.setLineDash([3,3]);ctx.strokeStyle=color(row.driver);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(bx,by+21);ctx.stroke();ctx.setLineDash([]);
+     ctx.fillStyle='#10141c';ctx.fillRect(bx,by,bw,21);ctx.strokeRect(bx,by,bw,21);ctx.textAlign='left';ctx.fillStyle=color(row.driver);ctx.fillText(label,bx+7,by+15);
+     ctx.beginPath();ctx.moveTo(px,py-5);ctx.lineTo(px+5,py);ctx.lineTo(px,py+5);ctx.lineTo(px-5,py);ctx.closePath();ctx.fill();
+    }
+   });
+  }
   if(showTyres){
    ctx.textAlign='left';ctx.font='17px system-ui';ctx.fillStyle='#9ba9ba';ctx.fillText('ШИНЫ · фактические отрезки, включая исключённые круги',x0,923);
    const laneX=n=>x0+(n-(first-.5))/Math.max(1,last-first+1)*w;
@@ -56,7 +69,7 @@ export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='lap
     for(const s of row.stints){const left=laneX(s.start-.5),right=laneX(s.end+.5),width=right-left,c=TYRE_COLORS[s.compound]||TYRE_COLORS.UNKNOWN;ctx.fillStyle=c;ctx.globalAlpha=.28;ctx.fillRect(left,yy,width,23);ctx.globalAlpha=1;ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(left,yy+22);ctx.lineTo(right,yy+22);ctx.stroke();
      const label=width>130?`${s.compound?.[0]||'?'} · ${s.start}–${s.end}`:s.compound?.[0]||'?';ctx.fillStyle=c;ctx.font='bold 13px monospace';ctx.textAlign='center';if(width>15)ctx.fillText(label,(left+right)/2,yy+16);
     }
-    for(const p of row.pits){const px=laneX(p.lap_number+.5),label=`PIT ${p.lap_number}`,labelX=Math.min(x0+w-27,Math.max(x0+27,px));ctx.fillStyle='#edf1f7';ctx.beginPath();ctx.moveTo(px,yy-1);ctx.lineTo(px-4,yy-7);ctx.lineTo(px+4,yy-7);ctx.closePath();ctx.fill();ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillText(label,labelX,yy-10);}
+    if(showPits)for(const p of row.pits){const px=laneX(p.lap_number+.5),label=`PIT ${p.lap_number}`,labelX=Math.min(x0+w-27,Math.max(x0+27,px));ctx.fillStyle='#edf1f7';ctx.beginPath();ctx.moveTo(px,yy-1);ctx.lineTo(px-4,yy-7);ctx.lineTo(px+4,yy-7);ctx.closePath();ctx.fill();ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillText(label,labelX,yy-10);}
    });
   }
  }else{

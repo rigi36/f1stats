@@ -1,6 +1,7 @@
 import {prepareLaps,lapKey,included,driverStats,formatTime,validTime,mean} from './pace.js';
 import {teamKey,teamStyles,orderedDrivers,moveDriver} from './presentation.js';
 import {drawChart} from './chart.js';
+import {parseLapSelection,hitPoints} from './chart-edit.js';
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colors={SOFT:'#ff646b',MEDIUM:'#ffe17b',HARD:'#eef2f8',INTERMEDIATE:'#76d780',WET:'#6cb7ff',UNKNOWN:'#a1adbb'};
@@ -41,6 +42,7 @@ async function loadRace(){
   await new Promise(r=>setTimeout(r,450));
  }
  if(!raw.laps.length)throw new Error('В этой сессии пока нет времён кругов.');
+ chartUndo.length=0;$('chart-undo').disabled=true;$('chart-picked').hidden=true;
  data={session,drivers:raw.drivers,stints:raw.stints,pits:raw.pit,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
  overrides={};try{const saved=JSON.parse(localStorage.getItem(storageKey())||'{}');overrides=validateOverrides(saved);}catch{status('Сохранённый выбор прочитать не удалось. Применён автоматический отбор.',true);}
  selected=new Set(data.drivers.map(d=>d.driver_number));
@@ -71,14 +73,14 @@ function renderMatrix(){
 }
 $('load').onclick=loadRace;$('year').onchange=loadSessions;$('stint').onchange=renderMatrix;
 function handleColumnClick(e){const move=e.target.closest('[data-move]');if(move){const n=Number(move.dataset.move);order=moveDriver(order,n,order.indexOf(n)+Number(move.dataset.step));persistView();render();return;}const b=e.target.closest('[data-driver]');if(!b)return;const n=Number(b.dataset.driver);selected.has(n)?selected.delete(n):selected.add(n);persistView();render();};
-$('laps').onclick=e=>{if(e.target.closest('[data-move], [data-driver]')){handleColumnClick(e);return;}const b=e.target.closest('[data-lap]');if(!b||b.disabled)return;const lap=data.laps.find(l=>lapKey(l)===b.dataset.lap);overrides[lapKey(lap)]=!included(lap,overrides);persist();render();};
-function range(include){const from=Number($('from').value||1),to=Number($('to').value||Math.max(...data.laps.map(l=>l.lap_number)));if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from){status('Укажи корректный диапазон кругов.',true);return;}for(const l of visibleLaps())if(l.lap_number>=from&&l.lap_number<=to&&validTime(l))overrides[lapKey(l)]=include;persist();render();}
+$('laps').onclick=e=>{if(e.target.closest('[data-move], [data-driver]')){handleColumnClick(e);return;}const b=e.target.closest('[data-lap]');if(!b||b.disabled)return;chartUndo.length=0;const lap=data.laps.find(l=>lapKey(l)===b.dataset.lap);overrides[lapKey(lap)]=!included(lap,overrides);persist();render();};
+function range(include){const from=Number($('from').value||1),to=Number($('to').value||Math.max(...data.laps.map(l=>l.lap_number)));if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from){status('Укажи корректный диапазон кругов.',true);return;}chartUndo.length=0;for(const l of visibleLaps())if(l.lap_number>=from&&l.lap_number<=to&&validTime(l))overrides[lapKey(l)]=include;persist();render();}
 $('exclude-range').onclick=()=>range(false);$('include-range').onclick=()=>range(true);
-$('reset').onclick=()=>{if(!confirm('Сбросить все ручные изменения этой гонки?'))return;overrides={};persist();render();};
+$('reset').onclick=()=>{if(!confirm('Сбросить все ручные изменения этой гонки?'))return;chartUndo.length=0;overrides={};persist();render();};
 function download(content,name){const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('export').onclick=()=>download(JSON.stringify({format:'f1stats-selection-v1',session_key:data.session.session_key,overrides},null,2),`f1stats-${data.session.session_key}.json`);
-$('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>2000000)throw new Error('Слишком большой файл');const json=JSON.parse(await file.text());if(json.format!=='f1stats-selection-v1'||json.session_key!==data.session.session_key)throw new Error('Файл относится к другой сессии или имеет неверный формат');const next=validateOverrides(json.overrides);overrides=next;status('Выбор импортирован.');persist();render();}catch(error){status(`Импорт не выполнен: ${error.message}`,true);}finally{e.target.value='';}};
-let dragged=null,chartState=null;
+$('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>2000000)throw new Error('Слишком большой файл');const json=JSON.parse(await file.text());if(json.format!=='f1stats-selection-v1'||json.session_key!==data.session.session_key)throw new Error('Файл относится к другой сессии или имеет неверный формат');const next=validateOverrides(json.overrides);chartUndo.length=0;overrides=next;status('Выбор импортирован.');persist();render();}catch(error){status(`Импорт не выполнен: ${error.message}`,true);}finally{e.target.value='';}};
+let dragged=null,chartState=null;const chartUndo=[];
 $('laps').ondragstart=e=>{const chip=e.target.closest('[data-order]');if(!chip)return;dragged=Number(chip.dataset.order);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(dragged));chip.classList.add('dragging');};
 $('laps').ondragover=e=>{if(dragged!==null){e.preventDefault();e.dataTransfer.dropEffect='move';}};
 $('laps').ondrop=e=>{e.preventDefault();const chip=e.target.closest('[data-order]');if(chip&&dragged!==null){const target=Number(chip.dataset.order);if(target!==dragged){order=moveDriver(order,dragged,order.indexOf(target));persistView();}}dragged=null;render();};
@@ -90,10 +92,11 @@ $('select-none').onclick=()=>{selected.clear();persistView();render();};
 function renderChart(){
  if(!data)return;
  $('chart-drivers').innerHTML=driversInOrder().map(d=>`<label class="chart-driver" style="--team:${teamColor(d)}"><input type="checkbox" data-chart-driver="${d.driver_number}" ${chartSelected.has(d.driver_number)?'checked':''}><span>${escape(d.name_acronym||d.driver_number)}</span></label>`).join('');
+ renderExcluded();
  const from=Number($('chart-from').value||1),to=Number($('chart-to').value||Infinity);
  const valid=Number.isInteger(from)&&from>=1&&(Number.isInteger(to)||to===Infinity)&&to>=from;
  $('chart-status').textContent=valid?'':'Неверный диапазон кругов.';
- chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value,stints:data.stints,pits:data.pits,showTyres:$('chart-tyres').checked});
+ chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value,stints:data.stints,pits:data.pits,showTyres:$('chart-tyres').checked,showPits:$('chart-pits').checked});
  $('chart-copy').disabled=$('chart-download').disabled=!chartState.hasData;
  $('pace-chart').setAttribute('aria-label',`${$('race-title').textContent}: ${$('chart-mode').selectedOptions[0].textContent}`);
  $('chart-data').textContent=chartState.series.map(s=>`${s.driver.name_acronym}: ${formatTime(mean(s.laps))}, ${s.laps.length} кругов`).join('; ');
@@ -101,11 +104,30 @@ function renderChart(){
 $('chart-mode').onchange=renderChart;
 $('chart-stint').onchange=renderChart;
 $('chart-tyres').onchange=renderChart;
+$('chart-pits').onchange=renderChart;
 $('chart-drivers').onchange=e=>{const n=Number(e.target.dataset.chartDriver);if(!Number.isFinite(n))return;e.target.checked?chartSelected.add(n):chartSelected.delete(n);persistView();renderChart();};
 $('chart-all').onclick=()=>{chartSelected=new Set(order);persistView();renderChart();};
 $('chart-none').onclick=()=>{chartSelected.clear();persistView();renderChart();};
 for(const id of ['chart-from','chart-to'])$(id).oninput=renderChart;
 $('pace-chart').onpointermove=e=>{const rect=e.currentTarget.getBoundingClientRect(),x=(e.clientX-rect.left)*e.currentTarget.width/rect.width,y=(e.clientY-rect.top)*e.currentTarget.height/rect.height;const nearest=chartState?.points?.reduce((best,p)=>Math.hypot(p.x-x,p.y-y)<(best?.distance??20)?{...p,distance:Math.hypot(p.x-x,p.y-y)}:best,null);e.currentTarget.title=nearest?`${nearest.driver.name_acronym} · круг ${nearest.lap.lap_number} · ${formatTime(nearest.lap.lap_duration)}`:'';};
+function renderExcluded(){
+ const rows=data.laps.filter(l=>chartSelected.has(l.driver_number)&&overrides[lapKey(l)]===false);
+ $('chart-excluded').innerHTML=rows.length?'<span class="muted">Исключены вручную:</span> '+rows.sort((a,b)=>order.indexOf(a.driver_number)-order.indexOf(b.driver_number)||a.lap_number-b.lap_number).map(l=>{const d=data.drivers.find(d=>d.driver_number===l.driver_number);return `<button class="excluded-tag" data-restore="${lapKey(l)}" style="--team:${teamColor(d||{})}" title="Вернуть автоматический отбор">${escape(d?.name_acronym||l.driver_number)} ${l.lap_number} ×</button>`;}).join(''):'';
+ $('chart-undo').disabled=!chartUndo.length;
+}
+function changeChartSelection(changes){
+ const previous=[];for(const [key,value] of changes){if(overrides[key]===value)continue;previous.push([key,overrides[key]]);if(value===undefined)delete overrides[key];else overrides[key]=value;}
+ if(!previous.length){$('chart-status').textContent='Нет новых изменений.';return;}
+ chartUndo.push(previous);$('chart-picked').hidden=true;persist();render();
+ $('chart-status').textContent=`Изменено кругов: ${previous.length}. Пересчитаны график и средние.`;
+}
+$('chart-exclude').onclick=()=>{try{if(!chartSelected.size)throw new Error('Выбери пилотов графика.');const numbers=parseLapSelection($('chart-exclude-input').value,Math.max(...data.laps.map(l=>l.lap_number)));const rows=data.laps.filter(l=>chartSelected.has(l.driver_number)&&numbers.has(l.lap_number)&&validTime(l)&&($('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value));if(!rows.length)throw new Error('Нет таких кругов у выбранных пилотов и отрезка.');changeChartSelection(rows.map(l=>[lapKey(l),false]));}catch(e){$('chart-status').textContent=e.message;}};
+$('chart-exclude-input').onkeydown=e=>{if(e.key==='Enter')$('chart-exclude').click();};
+$('chart-undo').onclick=()=>{const previous=chartUndo.pop();if(!previous)return;for(const [key,value]of previous){if(value===undefined)delete overrides[key];else overrides[key]=value;}$('chart-picked').hidden=true;persist();render();$('chart-status').textContent='Последнее изменение отменено.';};
+$('chart-excluded').onclick=e=>{const button=e.target.closest('[data-restore]');if(button)changeChartSelection([[button.dataset.restore,undefined]]);};
+$('pace-chart').onclick=e=>{const rect=e.currentTarget.getBoundingClientRect(),scale=e.currentTarget.width/rect.width;const points=hitPoints(chartState?.points||[],(e.clientX-rect.left)*scale,(e.clientY-rect.top)*e.currentTarget.height/rect.height,18*scale);if(!points.length){$('chart-picked').hidden=true;return;}
+ $('chart-picked').hidden=false;$('chart-picked').innerHTML='<span>Убрать круг:</span> '+points.map(p=>`<button data-remove="${lapKey(p.lap)}" style="--team:${teamColor(p.driver)}">${escape(p.driver.name_acronym)} · ${p.lap.lap_number} · ${formatTime(p.lap.lap_duration)}</button>`).join('')+'<button data-close>Закрыть</button>';};
+$('chart-picked').onclick=e=>{const button=e.target.closest('[data-remove]');if(button)changeChartSelection([[button.dataset.remove,false]]);else if(e.target.closest('[data-close]'))$('chart-picked').hidden=true;};
 function chartBlob(){return new Promise((resolve,reject)=>$('pace-chart').toBlob(blob=>blob?resolve(blob):reject(new Error('PNG не создан')),'image/png'));}
 $('chart-download').onclick=async()=>{try{const blob=await chartBlob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`f1stats-${data.session.session_key}-${$('chart-mode').value}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('chart-status').textContent='PNG скачан.';}catch(e){$('chart-status').textContent=e.message;}};
 $('chart-copy').onclick=async()=>{try{if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')throw new Error('Копирование недоступно в этом браузере. Используй «Скачать PNG».');const blob=chartBlob();await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);$('chart-status').textContent='PNG в буфере обмена.';}catch(e){$('chart-status').textContent='Не удалось скопировать PNG. Используй «Скачать PNG».';}};
