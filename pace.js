@@ -18,6 +18,7 @@ export function prepareLaps(laps,stints,pits,messages) {
  const intervals=neutralizations(messages);
  return laps.map(lap=>{
   const stint=stints.find(s=>s.driver_number===lap.driver_number&&lap.lap_number>=s.lap_start&&lap.lap_number<=s.lap_end);
+  const startAge=Number.isFinite(stint?.tyre_age_at_start)&&stint.tyre_age_at_start>=0?stint.tyre_age_at_start:null;
   const reasons=[];
   if(!validTime(lap)) reasons.push('NO TIME');
   if(lap.lap_number===1) reasons.push('START');
@@ -25,7 +26,7 @@ export function prepareLaps(laps,stints,pits,messages) {
   if(pits.some(p=>p.driver_number===lap.driver_number&&p.lap_number===lap.lap_number)) reasons.push('PIT');
   const start=Date.parse(lap.date_start), end=start+(lap.lap_duration||0)*1000;
   if(intervals.some(n=>Number.isFinite(start)?start<n.end&&end>n.start:lap.lap_number>=n.startLap&&lap.lap_number<=n.endLap)) reasons.push('SC/VSC/RED');
-  return {...lap,stint_number:stint?.stint_number??0,compound:stint?.compound??'UNKNOWN',tyre_age:stint ? (stint.tyre_age_at_start??0)+lap.lap_number-stint.lap_start : null,reasons};
+  return {...lap,stint_number:stint?.stint_number??0,compound:stint?.compound??'UNKNOWN',tyre_age:startAge===null?null:startAge+lap.lap_number-stint.lap_start,tyre_age_at_start:startAge,tyre_fresh:startAge===null?null:startAge===0,reasons};
  });
 }
 export function included(lap,overrides={}) { return validTime(lap)&&(overrides[lapKey(lap)]??(lap.reasons.length===0)); }
