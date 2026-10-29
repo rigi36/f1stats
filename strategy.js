@@ -13,7 +13,7 @@ export function strategyLabels(stints,x,measure){
  let previous=-Infinity;
  return stints.map(s=>{const label=String(s.lap_end),width=measure(label)+10,anchor=x(s.lap_end),center=Math.max(anchor,previous+4+width/2);previous=center+width/2;return {label,width,anchor,center};});
 }
-export function drawStrategy(canvas,{drivers,stints,title}){
+export function drawStrategy(canvas,{drivers,stints,title,source='OpenF1'}){
  const rows=strategyRows(drivers,stints),W=1600,H=Math.max(760,160+Math.max(1,rows.length)*40);
  canvas.width=W;canvas.height=H;canvas.style.aspectRatio=`${W}/${H}`;const ctx=canvas.getContext('2d');ctx.fillStyle='#10141c';ctx.fillRect(0,0,W,H);
  ctx.fillStyle='#edf1f7';ctx.font='bold 28px system-ui';ctx.textAlign='left';ctx.fillText(`${title} · Шинные стратегии`,100,47);
@@ -33,5 +33,5 @@ export function drawStrategy(canvas,{drivers,stints,title}){
  });
  const lx=1390;ctx.textAlign='left';ctx.font='15px system-ui';Object.entries(TYRE_COLORS).filter(([k])=>k!=='UNKNOWN').forEach(([name,color],i)=>{const y=110+i*66;ctx.strokeStyle=color;ctx.lineWidth=9;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(lx,y);ctx.lineTo(lx+135,y);ctx.stroke();ctx.fillStyle='#d4dce7';ctx.fillText(name,lx,y+27);});
  [['Новый',[]],['Прикатанный',[4,5]],['Возраст неизвестен',[2,5]]].forEach(([label,dash],i)=>{const y=480+i*62;if(y+28>H-30)return;ctx.strokeStyle='#d4dce7';ctx.lineWidth=9;ctx.setLineDash(dash);ctx.beginPath();ctx.moveTo(lx,y);ctx.lineTo(lx+135,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#a8b5c6';ctx.fillText(label,lx,y+26);});
- ctx.textAlign='center';ctx.fillStyle='#a8b5c6';ctx.font='18px system-ui';ctx.fillText('Круг',left+width/2,bottom+83);ctx.textAlign='right';ctx.font='13px system-ui';ctx.fillStyle='#6f7f95';ctx.fillText(stints.some(s=>s.data_note)?'F1 STATS · OpenF1 · STR: первый пит — 15 (коррекция по Honda)':'F1 STATS · OpenF1',W-35,H-16);
+ ctx.textAlign='center';ctx.fillStyle='#a8b5c6';ctx.font='18px system-ui';ctx.fillText('Круг',left+width/2,bottom+83);ctx.textAlign='right';ctx.font='13px system-ui';ctx.fillStyle='#6f7f95';ctx.fillText(stints.some(s=>s.data_note)?'F1 STATS · OpenF1 · STR: первый пит — 15 (коррекция по Honda)':'F1 STATS · '+source,W-35,H-16);
 }

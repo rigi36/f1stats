@@ -1,9 +1,9 @@
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {reasonOptions,validateReasons} from '../exclusion-reasons.js';
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {reasonOptions,validateReasons} from '../exclusion-reasons.js';import {selectionKey} from '../source.js';
 test('dialog saves, edits, undoes and resets exclusion reasons',()=>{
  const elements=new Map(),saved=new Map();
  const el=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:false,classList:{toggle(){}},showModal(){this.open=true;}});return elements.get(id);};
  const source=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/const currentYear=[\s\S]*$/,'');
- const context=vm.createContext({document:{getElementById:el},reasonOptions,validateReasons,lapKey:l=>l.driver_number+':'+l.lap_number,localStorage:{setItem:(k,v)=>saved.set(k,v)},console});
+ const context=vm.createContext({document:{getElementById:el},reasonOptions,validateReasons,selectionKey,lapKey:l=>l.driver_number+':'+l.lap_number,localStorage:{setItem:(k,v)=>saved.set(k,v)},console});
  vm.runInContext(source+`
  render=()=>{};
  data={session:{session_key:1},laps:[{driver_number:16,lap_number:3,reasons:[]}]};
@@ -28,3 +28,4 @@ test('dialog saves, edits, undoes and resets exclusion reasons',()=>{
  `,context);
  assert.equal(saved.get('f1stats:selection:v1:1:reasons'),'{}');
 });
+

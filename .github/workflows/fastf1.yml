@@ -1,0 +1,83 @@
+name: Update FastF1
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: Season
+        default: '2026'
+        required: true
+      round:
+        description: Round number or latest
+        default: latest
+        required: true
+      session:
+        description: Session
+        type: choice
+        options: [R, S]
+        default: R
+  push:
+    branches: [main]
+    paths:
+      - scripts/export_fastf1.py
+      - scripts/fastf1-requirements.txt
+      - .github/workflows/fastf1.yml
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: fastf1-update
+  cancel-in-progress: false
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/fastf1-requirements.txt
+      - run: python -m pip install -r scripts/fastf1-requirements.txt
+      - name: Check F1 TV setup
+        env:
+          F1_USERNAME: ${{ secrets.F1_USERNAME }}
+          F1_PASSWORD: ${{ secrets.F1_PASSWORD }}
+        run: |
+          if [ -z "$F1_USERNAME" ] || [ -z "$F1_PASSWORD" ]; then
+            echo '::error::Add F1_USERNAME and F1_PASSWORD in repository Settings > Secrets and variables > Actions. An active F1 TV subscription is required.'
+            exit 1
+          fi
+      - name: Load and export real FastF1 timing
+        env:
+          EXPORT_YEAR: ${{ inputs.year || '2026' }}
+          EXPORT_ROUND: ${{ inputs.round || 'latest' }}
+          EXPORT_SESSION: ${{ inputs.session || 'R' }}
+          F1_USERNAME: ${{ secrets.F1_USERNAME }}
+          F1_PASSWORD: ${{ secrets.F1_PASSWORD }}
+        run: python scripts/export_fastf1.py --year "$EXPORT_YEAR" --round "$EXPORT_ROUND" --session "$EXPORT_SESSION"
+      - name: Save successful export
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/fastf1
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update FastF1 timing data'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Prepare Pages
+        run: |
+          mkdir -p pages-artifact
+          cp *.html *.js *.css .nojekyll pages-artifact/
+          cp -R data pages-artifact/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-artifact
+      - name: Publish updated data
+        id: deployment
+        uses: actions/deploy-pages@v4

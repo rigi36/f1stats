@@ -12,7 +12,7 @@ function tyreBadge(ctx,compound,x,y,r=10){const c=TYRE_COLORS[compound]||TYRE_CO
 export function chartSeries(drivers,laps,overrides,{from=1,to=Infinity}={}) {
  return drivers.map(driver=>({driver,laps:laps.filter(l=>l.driver_number===driver.driver_number&&l.lap_number>=from&&l.lap_number<=to&&included(l,overrides)).sort((a,b)=>a.lap_number-b.lap_number)}));
 }
-export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='laps',from=1,to=Infinity,stint='all',stints=[],pits=[],showTyres=true,showPits=true}) {
+export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='laps',from=1,to=Infinity,stint='all',stints=[],pits=[],showTyres=true,showPits=true,source='OpenF1'}) {
  const badgePerLine=Math.max(1,Math.floor((1430/Math.max(1,drivers.length)-8)/30));
  const badgeRows=Math.max(0,...tyreContext(drivers,stints,pits,{from,to,stint}).map(r=>Math.ceil(r.stints.length/badgePerLine)));
  const averageLegendY=Math.max(842,806+badgeRows*27+25);
@@ -82,6 +82,6 @@ export function drawChart(canvas,{drivers,laps,overrides,palette,title,mode='lap
  }
  ctx.textAlign='left';const legendY=mode==='average'&&showTyres?averageLegendY:842;
  series.forEach((s,i)=>{const col=i%10,row=Math.floor(i/10),xx=92+col*148,yy=legendY+row*29;ctx.strokeStyle=color(s.driver);ctx.lineWidth=3;ctx.setLineDash(teammateIndex(s.driver)%2?[8,5]:[]);ctx.beginPath();ctx.moveTo(xx,yy-5);ctx.lineTo(xx+25,yy-5);ctx.stroke();ctx.setLineDash([]);ctx.font='15px monospace';ctx.fillStyle=color(s.driver);ctx.fillText(`${s.driver.name_acronym||s.driver.driver_number} (${s.laps.length})`,xx+33,yy);});
- ctx.fillStyle='#657489';ctx.font='14px system-ui';ctx.fillText('F1 STATS · OpenF1',W-238,H-21);
+ ctx.fillStyle='#657489';ctx.font='14px system-ui';ctx.fillText('F1 STATS · '+source,W-238,H-21);
  return {series,points,hasData:true};
 }

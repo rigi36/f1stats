@@ -5,6 +5,7 @@ import {drawStrategy,finishOrder} from './strategy.js';
 import {correctStints,STROLL_SOURCE} from './data-corrections.js';
 import {parseLapSelection,hitPoints} from './chart-edit.js';
 import {reasonOptions,validateReasons} from './exclusion-reasons.js';
+import {sourceLabel,selectionKey,validateFastF1} from './source.js';
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colors={SOFT:'#ff646b',MEDIUM:'#ffe17b',HARD:'#eef2f8',INTERMEDIATE:'#76d780',WET:'#6cb7ff',UNKNOWN:'#a1adbb'};
@@ -12,9 +13,9 @@ let palette=new Map(),order=[];
 const teamColor=d=>palette.get(teamKey(d.team_name))||'#a1adbb';
 const driversInOrder=()=>orderedDrivers(data.drivers,order);
 const tyre=(compound,age=null)=>`<span class="tyre" style="--tyre:${colors[compound]||colors.UNKNOWN}" title="${escape(compound)}${age===null?'':` · возраст ${age} кр. к началу круга`}"><i>${escape(compound?.[0]||'?')}</i>${age===null?'':age}</span>`;
-let sessions=[],data=null,overrides={},manualReasons={},selected=new Set(),chartSelected=new Set(),busy=false;
+let sessions=[],data=null,overrides={},manualReasons={},selected=new Set(),chartSelected=new Set(),busy=false,activeSource='openf1';
 const status=(message,error=false)=>{$('status').textContent=message;$('status').classList.toggle('error',error);};
-const storageKey=()=>`f1stats:selection:v1:${data.session.session_key}`;
+const storageKey=()=>selectionKey(data.source,data.session.session_key);
 function persist(){try{localStorage.setItem(storageKey(),JSON.stringify(overrides));localStorage.setItem(storageKey()+':reasons',JSON.stringify(manualReasons));}catch{status('Не удалось сохранить выбор в браузере. Экспортируй его в файл.',true);}}
 function persistView(){try{localStorage.setItem(`f1stats:view:v1:${data.session.session_key}`,JSON.stringify({order,selected:[...selected],chartSelected:[...chartSelected]}));}catch{status('Порядок пилотов не сохранён: хранилище недоступно.',true);}}
 async function api(endpoint,params){
@@ -26,19 +27,20 @@ async function api(endpoint,params){
   const rows=await response.json();if(!Array.isArray(rows))throw new Error('OpenF1 вернул неожиданный формат данных.');return rows;
  }
 }
-function lock(value){busy=value;for(const id of ['year','session','load'])$(id).disabled=value;}
+function lock(value){busy=value;for(const id of ['year','session','load','source'])$(id).disabled=value;}
 async function loadSessions(){
- lock(true);status('Загружаем список гонок…');
- try{sessions=(await api('sessions',{year:$('year').value,session_type:'Race'})).filter(s=>Date.parse(s.date_end)+30*60000<Date.now()).sort((a,b)=>Date.parse(a.date_start)-Date.parse(b.date_start));
- $('session').innerHTML=sessions.length?sessions.map(s=>`<option value="${s.session_key}">${escape(s.country_name)} · ${escape(s.location)} · ${escape(s.session_name)} · ${new Date(s.date_start).toLocaleDateString('ru-RU')}</option>`).join(''):'<option value="">Нет завершённых гонок</option>';
+ lock(true);$('provider-link').textContent=sourceLabel(activeSource)+' ↗';$('provider-link').href=activeSource==='fastf1'?'https://github.com/theOehrly/Fast-F1':'https://openf1.org';status('Загружаем список гонок…');
+ try{if(activeSource==='fastf1'){const response=await fetch(`data/fastf1/index-${$('year').value}.json`,{cache:'no-cache',signal:AbortSignal.timeout(30000)});if(response.status===404)sessions=[];else if(!response.ok)throw new Error('Не удалось получить список FastF1.');else sessions=await response.json();}else sessions=(await api('sessions',{year:$('year').value,session_type:'Race'})).filter(s=>Date.parse(s.date_end)+30*60000<Date.now()).sort((a,b)=>Date.parse(a.date_start)-Date.parse(b.date_start));
+ $('session').innerHTML=sessions.length?sessions.map(s=>`<option value="${s.session_key}">${escape(s.country_name)} · ${escape(s.location)} · ${escape(s.session_name)} · ${new Date(s.date_start).toLocaleDateString('ru-RU')}</option>`).join(''):`<option value="">${activeSource==='fastf1'?'Нет подготовленных гонок':'Нет завершённых гонок'}</option>`;
  if(sessions.length)$('session').value=sessions.at(-1).session_key;
- status(sessions.length?'':'Нет завершённых гонок.');
+ status(sessions.length?'':activeSource==='fastf1'?'FastF1: для этого сезона пока нет подготовленных гонок. Для загрузки нужны F1 TV и настройка GitHub Actions (ссылка «Обновить FastF1»).':'Нет завершённых гонок.');
  }catch(e){$('session').innerHTML='<option value="">Не удалось загрузить список</option>';status(e.message,true);}finally{lock(false);}
 }
 async function loadRace(){
  if(busy||!$('session').value)return;lock(true);$('analysis').hidden=true;
  try{
- const session=sessions.find(s=>String(s.session_key)===$('session').value);const raw={};
+ const session=sessions.find(s=>String(s.session_key)===$('session').value);const raw={};let ff=null;
+ if(activeSource==='fastf1'){status('Загружаем FastF1…');if(!/^[0-9]{4}-[0-9]+-[RS]\.json$/.test(session.file))throw new Error('Неверный путь данных FastF1.');const response=await fetch('data/fastf1/'+session.file,{cache:'no-cache',signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Гонка FastF1 ещё не подготовлена.');ff=validateFastF1(await response.json(),session.session_key);raw.drivers=ff.drivers;raw.laps=ff.laps;raw.stints=ff.stints;raw.pit=ff.pits;raw.results=ff.results;}else{
  for(const [index,endpoint] of ['drivers','laps','stints','pit','race_control'].entries()){
   status(`Загружаем ${session.location}: ${index+1}/5…`);
   raw[endpoint]=await api(endpoint,{session_key:session.session_key});
@@ -46,21 +48,22 @@ async function loadRace(){
  }
  if(!raw.laps.length)throw new Error('В этой сессии пока нет времён кругов.');
  try{status('Загружаем итоговую классификацию…');raw.results=await api('session_result',{session_key:session.session_key});}catch{raw.results=[];}
+ }
  $('pace-audit').hidden=true;chartUndo.length=0;$('chart-undo').disabled=true;$('chart-picked').hidden=true;
- raw.stints=correctStints(session.session_key,raw.stints,raw.pit);
- data={session,drivers:raw.drivers,results:raw.results,stints:raw.stints,pits:raw.pit,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
+ if(activeSource==='openf1')raw.stints=correctStints(session.session_key,raw.stints,raw.pit);
+ data={source:activeSource,session,drivers:raw.drivers,results:raw.results,stints:raw.stints,pits:raw.pit,laps:ff?ff.laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
  $('strategy-note').innerHTML=raw.stints.some(s=>s.data_note)?`STR: исправлена граница первого отрезка — 15-й круг. <a href="${STROLL_SOURCE}" target="_blank" rel="noopener">Источник: Honda</a>. Возраст комплектов — по OpenF1.`:'';
  overrides={};try{const saved=JSON.parse(localStorage.getItem(storageKey())||'{}');overrides=validateOverrides(saved);}catch{status('Сохранённый выбор прочитать не удалось. Применён автоматический отбор.',true);}
  manualReasons={};try{manualReasons=validateReasons(JSON.parse(localStorage.getItem(storageKey()+':reasons')||'{}'),overrides);}catch{}
  selected=new Set(data.drivers.map(d=>d.driver_number));
  order=data.drivers.map(d=>d.driver_number);palette=teamStyles(data.drivers);chartSelected=new Set(order);
  try{const view=JSON.parse(localStorage.getItem(`f1stats:view:v1:${session.session_key}`)||'null');const valid=new Set(order);if(view&&Array.isArray(view.order)&&Array.isArray(view.selected)){order=[...new Set(view.order.filter(n=>valid.has(n)))];order.push(...data.drivers.map(d=>d.driver_number).filter(n=>!order.includes(n)));selected=new Set(view.selected.filter(n=>valid.has(n)));if(Array.isArray(view.chartSelected))chartSelected=new Set(view.chartSelected.filter(n=>valid.has(n)));}}catch{}
- $('race-title').textContent=`${session.location} · ${session.session_name} ${session.year}`;
+ $('race-title').textContent=`${session.location} · ${session.session_name} ${session.year} · ${sourceLabel(data.source)}`;
  const numbers=[...new Set(data.laps.map(l=>l.stint_number))].filter(n=>n>0).sort((a,b)=>a-b);
  $('stint').innerHTML='<option value="all">Все отрезки</option>'+numbers.map(n=>`<option value="${n}">Отрезок ${n}</option>`).join('');
  $('chart-stint').innerHTML=$('stint').innerHTML;
  $('from').value='';$('to').value='';$('chart-from').value='';$('chart-to').value='';$('analysis').hidden=false;render();
- if(!$('status').classList.contains('error'))status('');
+ if(!$('status').classList.contains('error'))status(ff?`FastF1 ${ff.library_version} · подготовлено ${new Date(ff.generated_at).toLocaleString('ru-RU')}`:'');
  }catch(e){status(`Загрузка не завершена: ${e.message}`,true);}finally{lock(false);}
 }
 function validateOverrides(value){if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Неверный формат выбора');const keys=new Set(data.laps.map(lapKey));const out={};for(const [k,v]of Object.entries(value)){if(!keys.has(k)||typeof v!=='boolean')throw new Error('Файл содержит неизвестные круги или неверные значения');out[k]=v;}return out;}
@@ -69,7 +72,7 @@ function render(){
  const best=stats.find(d=>d.pace!==null)?.pace;
  $('summary').innerHTML='<thead><tr><th>Пилот</th><th>Средний темп</th><th>Δ с / круг</th><th>Кругов</th><th>Шинная стратегия</th></tr></thead><tbody>'+stats.map(d=>`<tr><td class="driver-name" style="--team:${teamColor(d)};border-left:3px solid var(--team);color:var(--team);background:color-mix(in srgb,var(--team) 9%,transparent)">${escape(d.name_acronym||d.driver_number)}<span class="team">${escape(d.team_name)}</span></td><td class="${d.pace===best?'best':''}">${formatTime(d.pace)}</td><td class="${d.pace===best?'best':''}">${d.pace===null?'—':d.pace===best?'BEST':`+${(d.pace-best).toFixed(3)}`}</td><td><button class="audit-count" data-audit-driver="${d.driver_number}">${d.count} / ${d.total}${d.manualRemoved||d.manualAdded?`<small>${d.manualRemoved?`−${d.manualRemoved}`:''} ${d.manualAdded?`+${d.manualAdded}`:''} вручную</small>`:''}</button></td><td>${data.stints.filter(s=>s.driver_number===d.driver_number).sort((a,b)=>a.stint_number-b.stint_number).map(s=>tyre(s.compound)).join(' → ')}</td></tr>`).join('')+'</tbody>';
  renderMatrix();
- drawStrategy($('strategy-chart'),{drivers:finishOrder(data.drivers,data.results),stints:data.stints,title:$('race-title').textContent+(data.results.length?'':' · классификация недоступна')});
+ drawStrategy($('strategy-chart'),{drivers:finishOrder(data.drivers,data.results),stints:data.stints,source:sourceLabel(data.source),title:$('race-title').textContent+(data.results.length?'':' · классификация недоступна')});
  $('stints').innerHTML='<thead><tr><th>Пилот</th><th>Отрезок</th><th>Шины / возраст</th><th>Круги</th><th>Учтено</th><th>Средний темп</th></tr></thead><tbody>'+data.stints.slice().sort((a,b)=>a.driver_number-b.driver_number||a.stint_number-b.stint_number).map(s=>{const d=data.drivers.find(d=>d.driver_number===s.driver_number);const stat=driverStats(data.laps.filter(l=>l.driver_number===s.driver_number&&l.stint_number===s.stint_number),overrides);return `<tr><td style="color:${d?teamColor(d):'#a1adbb'}">${escape(d?.name_acronym||s.driver_number)}</td><td>${s.stint_number}</td><td>${tyre(s.compound,s.tyre_age_at_start??0)}</td><td>${s.lap_start}–${s.lap_end}</td><td>${stat.count} / ${stat.total}</td><td>${formatTime(stat.pace)}</td></tr>`;}).join('')+'</tbody>';
 }
 $('summary').onclick=e=>{const button=e.target.closest('[data-audit-driver]');if(!button)return;const number=Number(button.dataset.auditDriver),driver=data.drivers.find(d=>d.driver_number===number),rows=data.laps.filter(l=>l.driver_number===number),base=driverStats(rows),current=driverStats(rows,overrides),removed=rows.filter(l=>included(l)&&!included(l,overrides)).map(l=>l.lap_number),added=rows.filter(l=>!included(l)&&included(l,overrides)).map(l=>l.lap_number);
@@ -83,6 +86,7 @@ function renderMatrix(){
 
  renderChart();
 }
+$('source').onchange=()=>{activeSource=$('source').value;$('analysis').hidden=true;loadSessions();};
 $('load').onclick=loadRace;$('year').onchange=loadSessions;$('stint').onchange=renderMatrix;
 function handleColumnClick(e){const move=e.target.closest('[data-move]');if(move){const n=Number(move.dataset.move);order=moveDriver(order,n,order.indexOf(n)+Number(move.dataset.step));persistView();render();return;}const b=e.target.closest('[data-driver]');if(!b)return;const n=Number(b.dataset.driver);selected.has(n)?selected.delete(n):selected.add(n);persistView();render();};
 function editExclusions(keys){
@@ -104,8 +108,8 @@ function range(include){const from=Number($('from').value||1),to=Number($('to').
 $('exclude-range').onclick=()=>range(false);$('include-range').onclick=()=>range(true);
 $('reset').onclick=()=>{if(!confirm('Сбросить все ручные изменения этой гонки?'))return;chartUndo.length=0;overrides={};manualReasons={};persist();render();};
 function download(content,name){const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('export').onclick=()=>download(JSON.stringify({format:'f1stats-selection-v1',session_key:data.session.session_key,overrides,reasons:manualReasons},null,2),`f1stats-${data.session.session_key}.json`);
-$('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>2000000)throw new Error('Слишком большой файл');const json=JSON.parse(await file.text());if(json.format!=='f1stats-selection-v1'||json.session_key!==data.session.session_key)throw new Error('Файл относится к другой сессии или имеет неверный формат');const next=validateOverrides(json.overrides),nextReasons=validateReasons(json.reasons||{},next);chartUndo.length=0;overrides=next;manualReasons=nextReasons;status('Выбор импортирован.');persist();render();}catch(error){status(`Импорт не выполнен: ${error.message}`,true);}finally{e.target.value='';}};
+$('export').onclick=()=>download(JSON.stringify({format:'f1stats-selection-v1',session_key:data.session.session_key,source:data.source,overrides,reasons:manualReasons},null,2),`f1stats-${data.session.session_key}.json`);
+$('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>2000000)throw new Error('Слишком большой файл');const json=JSON.parse(await file.text());if(json.format!=='f1stats-selection-v1'||(json.source||'openf1')!==data.source||json.session_key!==data.session.session_key)throw new Error('Файл относится к другой сессии или имеет неверный формат');const next=validateOverrides(json.overrides),nextReasons=validateReasons(json.reasons||{},next);chartUndo.length=0;overrides=next;manualReasons=nextReasons;status('Выбор импортирован.');persist();render();}catch(error){status(`Импорт не выполнен: ${error.message}`,true);}finally{e.target.value='';}};
 let dragged=null,chartState=null;const chartUndo=[];
 $('laps').ondragstart=e=>{const chip=e.target.closest('[data-order]');if(!chip)return;dragged=Number(chip.dataset.order);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(dragged));chip.classList.add('dragging');};
 $('laps').ondragover=e=>{if(dragged!==null){e.preventDefault();e.dataTransfer.dropEffect='move';}};
@@ -122,7 +126,7 @@ function renderChart(){
  const from=Number($('chart-from').value||1),to=Number($('chart-to').value||Infinity);
  const valid=Number.isInteger(from)&&from>=1&&(Number.isInteger(to)||to===Infinity)&&to>=from;
  $('chart-status').textContent=valid?'':'Неверный диапазон кругов.';
- chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value,stints:data.stints,pits:data.pits,showTyres:$('chart-tyres').checked,showPits:$('chart-pits').checked});
+ chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,source:sourceLabel(data.source),title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value,stints:data.stints,pits:data.pits,showTyres:$('chart-tyres').checked,showPits:$('chart-pits').checked});
  $('chart-copy').disabled=$('chart-download').disabled=!chartState.hasData;
  $('pace-chart').setAttribute('aria-label',`${$('race-title').textContent}: ${$('chart-mode').selectedOptions[0].textContent}`);
  $('chart-data').textContent=chartState.series.map(s=>`${s.driver.name_acronym}: ${formatTime(mean(s.laps))}, ${s.laps.length} кругов`).join('; ');
