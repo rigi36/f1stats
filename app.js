@@ -1,6 +1,7 @@
 import {prepareLaps,lapKey,included,driverStats,formatTime,validTime,mean} from './pace.js';
 import {teamKey,teamStyles,orderedDrivers,moveDriver} from './presentation.js';
 import {drawChart} from './chart.js';
+import {drawStrategy} from './strategy.js';
 import {parseLapSelection,hitPoints} from './chart-edit.js';
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -42,7 +43,7 @@ async function loadRace(){
   await new Promise(r=>setTimeout(r,450));
  }
  if(!raw.laps.length)throw new Error('В этой сессии пока нет времён кругов.');
- chartUndo.length=0;$('chart-undo').disabled=true;$('chart-picked').hidden=true;
+ $('pace-audit').hidden=true;chartUndo.length=0;$('chart-undo').disabled=true;$('chart-picked').hidden=true;
  data={session,drivers:raw.drivers,stints:raw.stints,pits:raw.pit,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
  overrides={};try{const saved=JSON.parse(localStorage.getItem(storageKey())||'{}');overrides=validateOverrides(saved);}catch{status('Сохранённый выбор прочитать не удалось. Применён автоматический отбор.',true);}
  selected=new Set(data.drivers.map(d=>d.driver_number));
@@ -58,12 +59,17 @@ async function loadRace(){
 }
 function validateOverrides(value){if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Неверный формат выбора');const keys=new Set(data.laps.map(lapKey));const out={};for(const [k,v]of Object.entries(value)){if(!keys.has(k)||typeof v!=='boolean')throw new Error('Файл содержит неизвестные круги или неверные значения');out[k]=v;}return out;}
 function render(){
- const stats=data.drivers.map(d=>({...d,...driverStats(data.laps.filter(l=>l.driver_number===d.driver_number),overrides)})).sort((a,b)=>(a.pace??Infinity)-(b.pace??Infinity));
+ const stats=data.drivers.map(d=>{const rows=data.laps.filter(l=>l.driver_number===d.driver_number),baseline=driverStats(rows),manualRemoved=rows.filter(l=>included(l)&&!included(l,overrides)).length,manualAdded=rows.filter(l=>!included(l)&&included(l,overrides)).length;return {...d,...driverStats(rows,overrides),baseline,manualRemoved,manualAdded};}).sort((a,b)=>(a.pace??Infinity)-(b.pace??Infinity));
  const best=stats.find(d=>d.pace!==null)?.pace;
- $('summary').innerHTML='<thead><tr><th>Пилот</th><th>Средний темп</th><th>Δ с / круг</th><th>Кругов</th><th>Шинная стратегия</th></tr></thead><tbody>'+stats.map(d=>`<tr><td class="driver-name" style="--team:${teamColor(d)};border-left:3px solid var(--team);color:var(--team);background:color-mix(in srgb,var(--team) 9%,transparent)">${escape(d.name_acronym||d.driver_number)}<span class="team">${escape(d.team_name)}</span></td><td class="${d.pace===best?'best':''}">${formatTime(d.pace)}</td><td class="${d.pace===best?'best':''}">${d.pace===null?'—':d.pace===best?'BEST':`+${(d.pace-best).toFixed(3)}`}</td><td>${d.count} / ${d.total}</td><td>${data.stints.filter(s=>s.driver_number===d.driver_number).sort((a,b)=>a.stint_number-b.stint_number).map(s=>tyre(s.compound)).join(' → ')}</td></tr>`).join('')+'</tbody>';
+ $('summary').innerHTML='<thead><tr><th>Пилот</th><th>Средний темп</th><th>Δ с / круг</th><th>Кругов</th><th>Шинная стратегия</th></tr></thead><tbody>'+stats.map(d=>`<tr><td class="driver-name" style="--team:${teamColor(d)};border-left:3px solid var(--team);color:var(--team);background:color-mix(in srgb,var(--team) 9%,transparent)">${escape(d.name_acronym||d.driver_number)}<span class="team">${escape(d.team_name)}</span></td><td class="${d.pace===best?'best':''}">${formatTime(d.pace)}</td><td class="${d.pace===best?'best':''}">${d.pace===null?'—':d.pace===best?'BEST':`+${(d.pace-best).toFixed(3)}`}</td><td><button class="audit-count" data-audit-driver="${d.driver_number}">${d.count} / ${d.total}${d.manualRemoved||d.manualAdded?`<small>${d.manualRemoved?`−${d.manualRemoved}`:''} ${d.manualAdded?`+${d.manualAdded}`:''} вручную</small>`:''}</button></td><td>${data.stints.filter(s=>s.driver_number===d.driver_number).sort((a,b)=>a.stint_number-b.stint_number).map(s=>tyre(s.compound)).join(' → ')}</td></tr>`).join('')+'</tbody>';
  renderMatrix();
+ drawStrategy($('strategy-chart'),{drivers:driversInOrder(),stints:data.stints,title:$('race-title').textContent});
  $('stints').innerHTML='<thead><tr><th>Пилот</th><th>Отрезок</th><th>Шины / возраст</th><th>Круги</th><th>Учтено</th><th>Средний темп</th></tr></thead><tbody>'+data.stints.slice().sort((a,b)=>a.driver_number-b.driver_number||a.stint_number-b.stint_number).map(s=>{const d=data.drivers.find(d=>d.driver_number===s.driver_number);const stat=driverStats(data.laps.filter(l=>l.driver_number===s.driver_number&&l.stint_number===s.stint_number),overrides);return `<tr><td style="color:${d?teamColor(d):'#a1adbb'}">${escape(d?.name_acronym||s.driver_number)}</td><td>${s.stint_number}</td><td>${tyre(s.compound,s.tyre_age_at_start??0)}</td><td>${s.lap_start}–${s.lap_end}</td><td>${stat.count} / ${stat.total}</td><td>${formatTime(stat.pace)}</td></tr>`;}).join('')+'</tbody>';
 }
+$('summary').onclick=e=>{const button=e.target.closest('[data-audit-driver]');if(!button)return;const number=Number(button.dataset.auditDriver),driver=data.drivers.find(d=>d.driver_number===number),rows=data.laps.filter(l=>l.driver_number===number),base=driverStats(rows),current=driverStats(rows,overrides),removed=rows.filter(l=>included(l)&&!included(l,overrides)).map(l=>l.lap_number),added=rows.filter(l=>!included(l)&&included(l,overrides)).map(l=>l.lap_number);
+ $('pace-audit').hidden=false;$('pace-audit').innerHTML=`<strong>${escape(driver?.name_acronym)} · отбор кругов</strong><button id="close-audit" class="secondary">Закрыть</button><p>Автоматический отбор: ${base.count} кругов · ${formatTime(base.pace)}. С ручными правками: ${current.count} кругов · ${formatTime(current.pace)}.</p><p>Убраны вручную: ${removed.join(', ')||'—'}. Возвращены вручную: ${added.join(', ')||'—'}.</p>`;$('close-audit').onclick=()=>{$('pace-audit').hidden=true;};};
+async function exportStrategy(copy){try{const blob=new Promise((resolve,reject)=>$('strategy-chart').toBlob(b=>b?resolve(b):reject(new Error('PNG не создан')),'image/png'));if(copy){if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')throw new Error('Копирование недоступно. Скачай PNG.');await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);$('strategy-status').textContent='PNG в буфере обмена.';}else{const url=URL.createObjectURL(await blob),a=document.createElement('a');a.href=url;a.download=`f1stats-${data.session.session_key}-tyres.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('strategy-status').textContent='PNG скачан.';}}catch(e){$('strategy-status').textContent=e.message;}}
+$('strategy-copy').onclick=()=>exportStrategy(true);$('strategy-download').onclick=()=>exportStrategy(false);
 function visibleLaps(){return data.laps.filter(l=>selected.has(l.driver_number)&&($('stint').value==='all'||String(l.stint_number)===$('stint').value));}
 function renderMatrix(){
  const drivers=driversInOrder();const visible=visibleLaps();const numbers=[...new Set(visible.map(l=>l.lap_number))].sort((a,b)=>a-b);const lookup=new Map(visible.map(l=>[lapKey(l),l]));

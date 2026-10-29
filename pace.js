@@ -7,8 +7,8 @@ export function neutralizations(messages) {
  for (const m of [...messages].sort((a,b)=>Date.parse(a.date)-Date.parse(b.date))) {
   const msg=(m.message||'').toUpperCase(); const time=Date.parse(m.date);
   if (!Number.isFinite(time)) continue;
-  const start=/VIRTUAL SAFETY CAR DEPLOYED|SAFETY CAR DEPLOYED/.test(msg)||m.flag==='RED';
-  const finish=/VIRTUAL SAFETY CAR ENDED|VSC ENDED|SAFETY CAR WITHDRAWN|SAFETY CAR RETURNED|TRACK CLEAR/.test(msg)||(m.flag==='GREEN'&&m.scope==='Track');
+  const start=/\b(?:VIRTUAL SAFETY CAR|SAFETY CAR|VSC|SC) DEPLOYED\b/.test(msg)||m.flag==='RED';
+  const finish=/VIRTUAL SAFETY CAR ENDED|VSC ENDED|SAFETY CAR WITHDRAWN|SAFETY CAR RETURNED/.test(msg)||(msg==='TRACK CLEAR'&&m.scope==='Track')||(m.flag==='GREEN'&&m.scope==='Track');
   if(start&&!active) active={start:time,startLap:m.lap_number,end:Infinity,endLap:Infinity};
   if(finish&&active){active.end=time;active.endLap=m.lap_number;intervals.push(active);active=null;}
  }
