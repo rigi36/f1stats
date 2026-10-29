@@ -41,7 +41,7 @@ async function loadRace(){
   await new Promise(r=>setTimeout(r,450));
  }
  if(!raw.laps.length)throw new Error('В этой сессии пока нет времён кругов.');
- data={session,drivers:raw.drivers,stints:raw.stints,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
+ data={session,drivers:raw.drivers,stints:raw.stints,pits:raw.pit,laps:prepareLaps(raw.laps,raw.stints,raw.pit,raw.race_control)};
  overrides={};try{const saved=JSON.parse(localStorage.getItem(storageKey())||'{}');overrides=validateOverrides(saved);}catch{status('Сохранённый выбор прочитать не удалось. Применён автоматический отбор.',true);}
  selected=new Set(data.drivers.map(d=>d.driver_number));
  order=data.drivers.map(d=>d.driver_number);palette=teamStyles(data.drivers);chartSelected=new Set(order);
@@ -93,18 +93,19 @@ function renderChart(){
  const from=Number($('chart-from').value||1),to=Number($('chart-to').value||Infinity);
  const valid=Number.isInteger(from)&&from>=1&&(Number.isInteger(to)||to===Infinity)&&to>=from;
  $('chart-status').textContent=valid?'':'Неверный диапазон кругов.';
- chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value});
+ chartState=drawChart($('pace-chart'),{drivers:driversInOrder().filter(d=>chartSelected.has(d.driver_number)),laps:valid?data.laps.filter(l=>$('chart-stint').value==='all'||String(l.stint_number)===$('chart-stint').value):[],overrides,palette,title:$('race-title').textContent,mode:$('chart-mode').value,from,to,stint:$('chart-stint').value,stints:data.stints,pits:data.pits,showTyres:$('chart-tyres').checked});
  $('chart-copy').disabled=$('chart-download').disabled=!chartState.hasData;
  $('pace-chart').setAttribute('aria-label',`${$('race-title').textContent}: ${$('chart-mode').selectedOptions[0].textContent}`);
  $('chart-data').textContent=chartState.series.map(s=>`${s.driver.name_acronym}: ${formatTime(mean(s.laps))}, ${s.laps.length} кругов`).join('; ');
 }
 $('chart-mode').onchange=renderChart;
 $('chart-stint').onchange=renderChart;
+$('chart-tyres').onchange=renderChart;
 $('chart-drivers').onchange=e=>{const n=Number(e.target.dataset.chartDriver);if(!Number.isFinite(n))return;e.target.checked?chartSelected.add(n):chartSelected.delete(n);persistView();renderChart();};
 $('chart-all').onclick=()=>{chartSelected=new Set(order);persistView();renderChart();};
 $('chart-none').onclick=()=>{chartSelected.clear();persistView();renderChart();};
 for(const id of ['chart-from','chart-to'])$(id).oninput=renderChart;
-$('pace-chart').onpointermove=e=>{const rect=e.currentTarget.getBoundingClientRect(),x=(e.clientX-rect.left)*1600/rect.width,y=(e.clientY-rect.top)*940/rect.height;const nearest=chartState?.points?.reduce((best,p)=>Math.hypot(p.x-x,p.y-y)<(best?.distance??20)?{...p,distance:Math.hypot(p.x-x,p.y-y)}:best,null);e.currentTarget.title=nearest?`${nearest.driver.name_acronym} · круг ${nearest.lap.lap_number} · ${formatTime(nearest.lap.lap_duration)}`:'';};
+$('pace-chart').onpointermove=e=>{const rect=e.currentTarget.getBoundingClientRect(),x=(e.clientX-rect.left)*e.currentTarget.width/rect.width,y=(e.clientY-rect.top)*e.currentTarget.height/rect.height;const nearest=chartState?.points?.reduce((best,p)=>Math.hypot(p.x-x,p.y-y)<(best?.distance??20)?{...p,distance:Math.hypot(p.x-x,p.y-y)}:best,null);e.currentTarget.title=nearest?`${nearest.driver.name_acronym} · круг ${nearest.lap.lap_number} · ${formatTime(nearest.lap.lap_duration)}`:'';};
 function chartBlob(){return new Promise((resolve,reject)=>$('pace-chart').toBlob(blob=>blob?resolve(blob):reject(new Error('PNG не создан')),'image/png'));}
 $('chart-download').onclick=async()=>{try{const blob=await chartBlob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`f1stats-${data.session.session_key}-${$('chart-mode').value}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('chart-status').textContent='PNG скачан.';}catch(e){$('chart-status').textContent=e.message;}};
 $('chart-copy').onclick=async()=>{try{if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')throw new Error('Копирование недоступно в этом браузере. Используй «Скачать PNG».');const blob=chartBlob();await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);$('chart-status').textContent='PNG в буфере обмена.';}catch(e){$('chart-status').textContent='Не удалось скопировать PNG. Используй «Скачать PNG».';}};
