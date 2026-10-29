@@ -6,6 +6,20 @@ from pathlib import Path
 from datetime import datetime, timezone
 import fastf1
 import pandas as pd
+import requests
+from urllib.parse import urlsplit
+
+
+def log_http_failures():
+    """Print status and host only; never credentials, tokens, headers or bodies."""
+    original = requests.Session.send
+    def send(self, request, **kwargs):
+        response = original(self, request, **kwargs)
+        host = urlsplit(request.url).hostname or ''
+        if response.status_code >= 400 and ('formula1.com' in host or 'fastf1.dev' in host):
+            print(f'F1 timing HTTP {response.status_code} from {host}', flush=True)
+        return response
+    requests.Session.send = send
 
 
 def number(value):
@@ -107,6 +121,7 @@ def main():
     else:
         round_number = int(args.round)
     session = fastf1.get_session(args.year, round_number, args.session)
+    log_http_failures()
     session.load(telemetry=False, weather=False, messages=False)
     payload = convert(session, args.year, round_number, args.session)
     out = Path(args.output)
