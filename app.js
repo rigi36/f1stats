@@ -6,6 +6,8 @@ import {correctStints,STROLL_SOURCE} from './data-corrections.js';
 import {parseLapSelection,hitPoints} from './chart-edit.js';
 import {reasonOptions,validateReasons} from './exclusion-reasons.js';
 import {sourceLabel,selectionKey,validateFastF1} from './source.js';
+import {localFastF1Files,saveLocalFastF1,mergeFastF1Sessions} from './local-fastf1.js';
+const localFiles=new Map();
 const $=id=>document.getElementById(id);
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colors={SOFT:'#ff646b',MEDIUM:'#ffe17b',HARD:'#eef2f8',INTERMEDIATE:'#76d780',WET:'#6cb7ff',UNKNOWN:'#a1adbb'};
@@ -27,20 +29,20 @@ async function api(endpoint,params){
   const rows=await response.json();if(!Array.isArray(rows))throw new Error('OpenF1 вернул неожиданный формат данных.');return rows;
  }
 }
-function lock(value){busy=value;for(const id of ['year','session','load','source'])$(id).disabled=value;}
+function lock(value){busy=value;for(const id of ['year','session','load','source','fastf1-file'])$(id).disabled=value;}
 async function loadSessions(){
  lock(true);$('provider-link').textContent=sourceLabel(activeSource)+' ↗';$('provider-link').href=activeSource==='fastf1'?'https://github.com/theOehrly/Fast-F1':'https://openf1.org';status('Загружаем список гонок…');
- try{if(activeSource==='fastf1'){const response=await fetch(`data/fastf1/index-${$('year').value}.json`,{cache:'no-cache',signal:AbortSignal.timeout(30000)});if(response.status===404)sessions=[];else if(!response.ok)throw new Error('Не удалось получить список FastF1.');else sessions=await response.json();}else sessions=(await api('sessions',{year:$('year').value,session_type:'Race'})).filter(s=>Date.parse(s.date_end)+30*60000<Date.now()).sort((a,b)=>Date.parse(a.date_start)-Date.parse(b.date_start));
+ try{if(activeSource==='fastf1'){try{for(const p of await localFastF1Files())if(!localFiles.has(p.session.session_key))localFiles.set(p.session.session_key,validateFastF1(p,p.session.session_key));}catch{}let remote=[];try{const response=await fetch(`data/fastf1/index-${$('year').value}.json`,{cache:'no-cache',signal:AbortSignal.timeout(10000)});if(response.ok)remote=await response.json();else if(response.status!==404)throw new Error();}catch{if(!localFiles.size)throw new Error('Список FastF1 недоступен. Можно импортировать локальный JSON.');}sessions=mergeFastF1Sessions(remote,[...localFiles.values()],$('year').value);}else sessions=(await api('sessions',{year:$('year').value,session_type:'Race'})).filter(s=>Date.parse(s.date_end)+30*60000<Date.now()).sort((a,b)=>Date.parse(a.date_start)-Date.parse(b.date_start));
  $('session').innerHTML=sessions.length?sessions.map(s=>`<option value="${s.session_key}">${escape(s.country_name)} · ${escape(s.location)} · ${escape(s.session_name)} · ${new Date(s.date_start).toLocaleDateString('ru-RU')}</option>`).join(''):`<option value="">${activeSource==='fastf1'?'Нет подготовленных гонок':'Нет завершённых гонок'}</option>`;
  if(sessions.length)$('session').value=sessions.at(-1).session_key;
- status(sessions.length?'':activeSource==='fastf1'?'FastF1: для этого сезона пока нет подготовленных гонок. Для загрузки нужны F1 TV и настройка GitHub Actions (ссылка «Обновить FastF1»).':'Нет завершённых гонок.');
+ status(sessions.length?'':activeSource==='fastf1'?'FastF1: для этого сезона пока нет подготовленных гонок. Скачай гонку локально и нажми «Импорт FastF1 JSON».':'Нет завершённых гонок.');
  }catch(e){$('session').innerHTML='<option value="">Не удалось загрузить список</option>';status(e.message,true);}finally{lock(false);}
 }
 async function loadRace(){
  if(busy||!$('session').value)return;lock(true);$('analysis').hidden=true;
  try{
  const session=sessions.find(s=>String(s.session_key)===$('session').value);const raw={};let ff=null;
- if(activeSource==='fastf1'){status('Загружаем FastF1…');if(!/^[0-9]{4}-[0-9]+-[RS]\.json$/.test(session.file))throw new Error('Неверный путь данных FastF1.');const response=await fetch('data/fastf1/'+session.file,{cache:'no-cache',signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Гонка FastF1 ещё не подготовлена.');ff=validateFastF1(await response.json(),session.session_key);raw.drivers=ff.drivers;raw.laps=ff.laps;raw.stints=ff.stints;raw.pit=ff.pits;raw.results=ff.results;}else{
+ if(activeSource==='fastf1'){status('Загружаем FastF1…');if(localFiles.has(session.session_key)){ff=validateFastF1(localFiles.get(session.session_key),session.session_key);}else{if(!/^[0-9]{4}-[0-9]+-[RS]\.json$/.test(session.file))throw new Error('Неверный путь данных FastF1.');const response=await fetch('data/fastf1/'+session.file,{cache:'no-cache',signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('Гонка FastF1 ещё не подготовлена.');ff=validateFastF1(await response.json(),session.session_key);}raw.drivers=ff.drivers;raw.laps=ff.laps;raw.stints=ff.stints;raw.pit=ff.pits;raw.results=ff.results;}else{
  for(const [index,endpoint] of ['drivers','laps','stints','pit','race_control'].entries()){
   status(`Загружаем ${session.location}: ${index+1}/5…`);
   raw[endpoint]=await api(endpoint,{session_key:session.session_key});
@@ -86,6 +88,20 @@ function renderMatrix(){
 
  renderChart();
 }
+$('fastf1-file').onchange=async e=>{
+ if(busy)return;
+ const file=e.target.files[0];if(!file)return;
+ try{
+  if(file.size>15000000)throw new Error('Файл больше 15 МБ.');
+  const parsed=JSON.parse(await file.text()),payload=validateFastF1(parsed,parsed?.session?.session_key);
+  let saved=true;try{await saveLocalFastF1(payload);}catch{saved=false;}
+  localFiles.set(payload.session.session_key,payload);
+  activeSource='fastf1';$('source').value='fastf1';$('analysis').hidden=true;
+  const year=String(payload.session.year);if(![...$('year').options].some(o=>o.value===year))$('year').add(new Option(year,year));$('year').value=year;
+  await loadSessions();$('session').value=payload.session.session_key;await loadRace();
+  if(!saved)status('Гонка открыта, но браузер не сохранил файл. После перезагрузки импортируй его снова.',true);
+ }catch(error){status('Импорт FastF1: '+error.message,true);}finally{e.target.value='';}
+};
 $('source').onchange=()=>{activeSource=$('source').value;$('analysis').hidden=true;loadSessions();};
 $('load').onclick=loadRace;$('year').onchange=loadSessions;$('stint').onchange=renderMatrix;
 function handleColumnClick(e){const move=e.target.closest('[data-move]');if(move){const n=Number(move.dataset.move);order=moveDriver(order,n,order.indexOf(n)+Number(move.dataset.step));persistView();render();return;}const b=e.target.closest('[data-driver]');if(!b)return;const n=Number(b.dataset.driver);selected.has(n)?selected.delete(n):selected.add(n);persistView();render();};
